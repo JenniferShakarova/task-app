@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     } = await supabaseClient.auth.getUser();
     if (!user) throw new Error("No user found");
 
-    // Create the task
+    // Create the task first (all users can create tasks)
     const { data, error } = await supabaseClient
       .from("tasks")
       .insert({
@@ -56,51 +56,119 @@ Deno.serve(async (req) => {
 
     if (error) throw error;
 
-    // Initialize OpenAI
-    const openai = new OpenAI({
-      apiKey: OPENAI_API_KEY,
-    });
-
-    // Get label suggestion from OpenAI
-    const prompt = `Based on this task title: "${title}" and description: "${description}", suggest ONE of these labels: work, personal, priority, shopping, home. Reply with just the label word and nothing else.`;
-
-    const completion = await openai.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: "gpt-4o-mini",
-      temperature: 0.3,
-      max_tokens: 16,
-    });
-
-    const suggestedLabel = completion.choices[0].message.content
-      ?.toLowerCase()
-      .trim();
-
-    console.log(`✨ AI Suggested Label: ${suggestedLabel}`);
-
-    // Validate the label
-    const validLabels = ["work", "personal", "priority", "shopping", "home"];
-    const label = validLabels.includes(suggestedLabel) ? suggestedLabel : null;
-
-    // Update the task with the suggested label
-    const { data: updatedTask, error: updateError } = await supabaseClient
-      .from("tasks")
-      .update({ label })
-      .eq("task_id", data.task_id)
-      .select()
+    // Check subscription status for AI features
+    const { data: profile, error: profileError } = await supabaseClient
+      .from("profiles")
+      .select("subscription_plan")
+      .eq("user_id", user.id)
       .single();
 
-    if (updateError) throw updateError;
+    if (profileError) {
+      console.warn("Failed to fetch user profile for AI features:", profileError);
+      // Return task without AI label if profile fetch fails
+      return new Response(JSON.stringify(data), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
 
-    return new Response(JSON.stringify(updatedTask), {
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  } catch (error) {
+    // Check if user has premium subscription for AI features
+    const isPremium = profile?.subscription_plan === "premium";
+    
+    if (!isPremium) {
+      console.log("User does not have premium subscription, skipping AI label generation");
+      // Return task without AI label for free users
+      return new Response(JSON.stringify(data), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    // Premium users: Generate AI label
+    // Check if OpenAI API key is configured
+    if (!OPENAI_API_KEY) {
+      console.warn("OpenAI API key is not configured, returning task without AI label");
+      return new Response(JSON.stringify(data), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    try {
+      // Initialize OpenAI
+      const openai = new OpenAI({
+        apiKey: OPENAI_API_KEY,
+      });
+
+      // Get label suggestion from OpenAI
+      const prompt = `Based on this task title: "${title}" and description: "${description}", suggest ONE of these labels: work, personal, priority, shopping, home. Reply with just the label word and nothing else.`;
+
+      const completion = await openai.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "gpt-4o-mini",
+        temperature: 0.3,
+        max_tokens: 16,
+      });
+
+      const suggestedLabel = completion.choices[0].message.content
+        ?.toLowerCase()
+        .trim();
+
+      console.log(`✨ AI Suggested Label: ${suggestedLabel}`);
+
+      // Validate the label
+      const validLabels = ["work", "personal", "priority", "shopping", "home"];
+      const label = validLabels.includes(suggestedLabel) ? suggestedLabel : null;
+
+      // Update the task with the suggested label
+      const { data: updatedTask, error: updateError } = await supabaseClient
+        .from("tasks")
+        .update({ label })
+        .eq("task_id", data.task_id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.warn("Failed to update task with AI label:", updateError);
+        // Return task without label if update fails
+        return new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
+
+      return new Response(JSON.stringify(updatedTask), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    } catch (aiError: any) {
+      console.error("Error generating AI label:", aiError);
+      // Return task without label if AI fails
+      return new Response(JSON.stringify(data), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+  } catch (error: any) {
     console.error("Error in create-task-with-ai:", error.message);
+    
+    // Return 403 for subscription-related errors
+    const statusCode = error.message?.includes("premium") ? 403 : 400;
+    
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 400,
+      status: statusCode,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

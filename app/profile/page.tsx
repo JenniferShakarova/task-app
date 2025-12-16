@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CreditCard, LogOut } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,9 +9,29 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function Profile() {
-  const { user, isLoading, signOut } = useAuth();
-  const { session } = useAuth();
+  const { user, isLoading, signOut, session } = useAuth();
   const { manageSubscription } = useSubscription();
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(false);
+
+  const handleManageSubscription = async () => {
+    if (!session?.access_token) {
+      setSubscriptionError("Please log in again to manage your subscription");
+      return;
+    }
+
+    setIsLoadingSubscription(true);
+    setSubscriptionError(null);
+    
+    try {
+      await manageSubscription(session.access_token);
+    } catch (error: any) {
+      console.error("Subscription error:", error);
+      setSubscriptionError(error.message || "Failed to open subscription page. Please try again.");
+    } finally {
+      setIsLoadingSubscription(false);
+    }
+  };
 
   if (isLoading || !user) {
     return <LoadingSkeleton />;
@@ -38,10 +59,16 @@ export default function Profile() {
               Tasks Created: {user.tasks_created} / {user.tasks_limit}
             </p>
           </div>
-          <Button onClick={() => manageSubscription(session?.access_token)}>
+          <Button 
+            onClick={handleManageSubscription}
+            disabled={isLoadingSubscription || !session?.access_token}
+          >
             <CreditCard className="mr-2 h-4 w-4" />
-            Manage Subscription
+            {isLoadingSubscription ? "Loading..." : "Manage Subscription"}
           </Button>
+          {subscriptionError && (
+            <div className="text-red-500 text-sm mt-2">{subscriptionError}</div>
+          )}
         </CardContent>
       </Card>
       <div className="flex justify-end">

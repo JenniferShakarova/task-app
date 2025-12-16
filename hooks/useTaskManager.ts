@@ -186,7 +186,7 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create task");
+        throw new Error(errorData.error || errorData.message || "Failed to create task");
       }
 
       const taskData = await response.json();

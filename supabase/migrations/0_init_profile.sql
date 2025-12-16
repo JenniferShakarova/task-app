@@ -1,5 +1,5 @@
 -- Enable required extensions
-create extension if not exists "uuid-ossp";
+create extension if not exists "uuid-ossp" with schema public;
 
 -- User Profile table (extends Supabase auth.users)
 create table public.profiles (
